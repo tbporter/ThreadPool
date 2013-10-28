@@ -117,6 +117,22 @@ void* thread_run(void* tpool) {
     return NULL;
 }
 
+
+struct future * thread_pool_submit(struct thread_pool * pool,
+        thread_pool_callable_func_t callable, void* callable_data) {
+        if (pthread_mutex_lock(&pool->lock) == -1) {
+            perror("Error locking thread pool mutex in thread pool submit\n");
+            return NULL;
+        }
+        struct future* fut;
+        if ((long) malloc(sizeof(struct future)) == -1) {
+            perror("Error locking thread pool mutex in thread pool submit\n");
+            return NULL;
+        }
+}
+
+
+
 void future_free(struct future* f){
     free(f);
     
