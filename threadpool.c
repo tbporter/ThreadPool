@@ -100,11 +100,7 @@ static void* thread_run(void* tpool) {
             }
         }
         else {
-            if (pthread_mutex_unlock(&pool->lock) == -1) {
-                perror("Error unlocking thread pool mutex in worker thread\n");
-                return NULL;
-            }
-            /* It's empty so lets wait */
+            /* It's empty so lets wait, this also unlockes the mutex */
             pthread_cond_wait(&pool->condition, &pool->lock);
             /* loop assumes thread pool lock is possessed when starting so lets just reloop */
         }
@@ -139,12 +135,13 @@ struct future * thread_pool_submit(struct thread_pool * pool,
         return NULL;
     }
     list_push_back(&pool->work_queue, &fut->elem);
-    if (pthread_mutex_unlock(&pool->lock) == -1) {
-        perror("Error locking thread pool mutex in thread pool submit\n");
-        return NULL;
-    }
+    /* Let a thread know there is work if one is waiting */
     if (pthread_cond_signal(&pool->condition) == -1) {
         perror("Error while signalling other threads of new job\n");
+        return NULL;
+    }
+    if (pthread_mutex_unlock(&pool->lock) == -1) {
+        perror("Error locking thread pool mutex in thread pool submit\n");
         return NULL;
     }
     return fut;
