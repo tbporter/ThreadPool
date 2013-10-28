@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <stdio.h>
+#include <semaphore.h>
 
 #include "threadpool.h"
 #include "list.h"
@@ -14,7 +15,7 @@ struct future {
     void* result;
     void* argument;
     thread_pool_callable_func_t execution;
-    pthread_mutex_t lock;
+    sem_t sem;
 };
 
 struct thread_data {
@@ -115,5 +116,16 @@ void* thread_run(void* tpool) {
     return NULL;
 }
 
+void future_free(struct future* f){
+    free(f);
+    
+    return;
+}
 
+void* future_get(struct future* f){
+    /* Wait until the future is done */
+    sem_wait(&(f->sem));
+
+    return f->result;
+}
 
