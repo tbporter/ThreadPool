@@ -75,7 +75,7 @@ struct thread_pool* thread_pool_new(int nthreads) {
 }
 
 static void* thread_run(void* tpool) {
-    struct thread_pool* pool = (struct thread_pool*) pool;
+    struct thread_pool* pool = (struct thread_pool*) tpool;
     struct future* future = NULL;
     /* Race conditions don't apply to checking running state, but the loop is cleaner like this */
     if (pthread_mutex_lock(&pool->lock) == -1) {
@@ -91,8 +91,8 @@ static void* thread_run(void* tpool) {
             }
             /* Execute the future now */
             future->result = future->execution(future->argument);
+            fprintf(stderr, "Completed execution\n");
             sem_post(&(future->sem));
-
             /* We've finished there might be more in the queue */
             if (pthread_mutex_lock(&pool->lock) == -1) {
                 perror("Error locking thread pool mutex in worker thread\n");
@@ -120,30 +120,34 @@ static void* thread_run(void* tpool) {
 
 struct future * thread_pool_submit(struct thread_pool * pool,
         thread_pool_callable_func_t callable, void* callable_data) {
-        struct future* fut;
-        if ((long) (fut = malloc(sizeof(struct future))) == -1) {
-            perror("Error locking thread pool mutex in thread pool submit\n");
-            return NULL;
-        }
-        /* Set the memory values */
-        fut->execution = callable;
-        fut->argument = callable_data;
-        /* Initialize the semaphore */
-        if (sem_init(&fut->sem, 0, 0) == -1) {
-            perror("Error initializing semaphore for future\n");
-            return NULL;
-        }
-        /* Throw it into the work queue */
-        if (pthread_mutex_lock(&pool->lock) == -1) {
-            perror("Error locking thread pool mutex in thread pool submit\n");
-            return NULL;
-        }
-        list_push_back(&pool->work_queue, &fut->elem);
-        if (pthread_mutex_unlock(&pool->lock) == -1) {
-            perror("Error locking thread pool mutex in thread pool submit\n");
-            return NULL;
-        }
-        return fut;
+    struct future* fut;
+    if ((long) (fut = malloc(sizeof(struct future))) == -1) {
+        perror("Error locking thread pool mutex in thread pool submit\n");
+        return NULL;
+    }
+    /* Set the memory values */
+    fut->execution = callable;
+    fut->argument = callable_data;
+    /* Initialize the semaphore */
+    if (sem_init(&fut->sem, 0, 0) == -1) {
+        perror("Error initializing semaphore for future\n");
+        return NULL;
+    }
+    /* Throw it into the work queue */
+    if (pthread_mutex_lock(&pool->lock) == -1) {
+        perror("Error locking thread pool mutex in thread pool submit\n");
+        return NULL;
+    }
+    list_push_back(&pool->work_queue, &fut->elem);
+    if (pthread_mutex_unlock(&pool->lock) == -1) {
+        perror("Error locking thread pool mutex in thread pool submit\n");
+        return NULL;
+    }
+    if (pthread_cond_signal(&pool->condition) == -1) {
+        perror("Error while signalling other threads of new job\n");
+        return NULL;
+    }
+    return fut;
 }
 
 void thread_pool_shutdown(struct thread_pool* pool) {
