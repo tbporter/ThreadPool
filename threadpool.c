@@ -148,12 +148,13 @@ struct future * thread_pool_submit(struct thread_pool * pool,
 }
 
 void thread_pool_shutdown(struct thread_pool* pool) {
-    pool->running = false;
-    pthread_cond_broadcast(&pool->condition);
+    /* Had to move this up here for helgrind */
     if (pthread_mutex_lock(&pool->lock) == -1) {
         perror("Error locking thread pool mutex in thread pool shutdown\n");
         return;
     }
+    pool->running = false;
+    pthread_cond_broadcast(&pool->condition);
     while (!list_empty(&pool->thread_list)) {
         struct thread_data* tdata = list_entry(list_pop_front(&pool->thread_list), struct thread_data, elem);
         void* ret;
@@ -196,14 +197,19 @@ void thread_pool_shutdown(struct thread_pool* pool) {
 }
 
 void future_free(struct future* f){
+    if (sem_destroy(&f->sem) == -1) {
+        perror("Error destroying future semaphore\n");
+        return;
+    }
     free(f);
-    
-    return;
 }
 
 void* future_get(struct future* f){
     /* Wait until the future is done */
-    sem_wait(&(f->sem));
+    if (sem_wait(&(f->sem)) == -1) {
+        perror("Error waiting on future semaphore\n");
+        return NULL;
+    }
 
     return f->result;
 }
