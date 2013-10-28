@@ -1,5 +1,6 @@
 #include <pthread.h>
 #include <stdbool.h>
+#include <semaphore.h>
 #include "list.h"
 
 void* (* thread_running)(void* pool);
@@ -9,7 +10,7 @@ struct future {
     void* result;
     void* argument;
     thread_pool_callable_t execution;
-    pthread_mutex_t lock;
+    sem_t sem;
 };
 
 struct thread_data {
@@ -97,5 +98,16 @@ void* thread_running(void* pool) {
     }
 }
 
+void future_free(struct future* f){
+    free(f);
+    
+    return;
+}
 
+void* future_get(struct future* f){
+    /* Wait until the future is done */
+    sem_wait(&(f->sem));
+
+    return f->result;
+}
 
