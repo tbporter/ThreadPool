@@ -1,21 +1,26 @@
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <stdio.h>
+
+#include "threadpool.h"
 #include "list.h"
 
-void* (* thread_running)(void* pool);
+void* thread_run(void* tpool);
 
 struct future {
     struct list_elem elem;
     void* result;
     void* argument;
-    thread_pool_callable_t execution;
+    thread_pool_callable_func_t execution;
     pthread_mutex_t lock;
 };
 
 struct thread_data {
     struct list_elem elem;
     pthread_t thread;
-}
+};
 
 struct thread_pool {
     struct list work_queue;
@@ -23,21 +28,27 @@ struct thread_pool {
     bool running;
     pthread_cond_t condition;
     pthread_mutex_t lock;
-}
+};
 
 struct thread_pool* thread_pool_new(int nthreads) {
     struct thread_pool* pool;
-    if ((pool = malloc(sizeof(struct thread_pool))) == -1) {
+    if ((long) (pool = malloc(sizeof(struct thread_pool))) == -1) {
         perror("Error in malloc\n");
         return NULL;
     }
-    pool->condition = PTHREAD_CONT_INITIALIZER;
-    pool->lock = PTHREAD_MUTEX_INITIALIZER;
+    if (pthread_cond_init(&pool->condition, NULL) == -1) {
+        perror("Error initializing threadpool condition\n");
+        return NULL;
+    }
+    if (pthread_mutex_init(&pool->lock, NULL) == -1) {
+        perror("Error initializing threadpool mutex\n");
+        return NULL;
+    }
     list_init(&pool->work_queue);
     list_init(&pool->thread_list);
     pool->running = true;
 
-    if (pthread_mutex_lock(pool->lock) == -1) {
+    if (pthread_mutex_lock(&pool->lock) == -1) {
         perror("Error locking thread pool mutex the first time\n");
         return NULL;
     }
@@ -45,56 +56,63 @@ struct thread_pool* thread_pool_new(int nthreads) {
     int i;
     for (i = 0; i < nthreads; i++) {
         struct thread_data* tdata;
-        if ((tdata = malloc(sizeof(struct thread_data))) == -1) {
+        if ((long) (tdata = malloc(sizeof(struct thread_data))) == -1) {
             perror("Error in malloc\n");
             return NULL;
         }
-        if (pthread_create(&tdata->thread, NULL, thread_running, (void *) pool) == -1) {
+        if (pthread_create(&tdata->thread, NULL, thread_run, (void *) pool) == -1) {
             perror("Error spawning threads for threadpool\n");
             return NULL;
         }
-        list_push_back(&pool->thread_list, tdata->elem);
+        list_push_back(&pool->thread_list, &tdata->elem);
     }
-    if (pthread_mutex_unlock(pool->lock) == -1) {
+    if (pthread_mutex_unlock(&pool->lock) == -1) {
         perror("Error unlocking thread pool mutex the first time\n");
         return NULL;
     }
+    return pool;
 }
 
-void* thread_running(void* pool) {
+void* thread_run(void* tpool) {
     struct thread_pool* pool = (struct thread_pool*) pool;
     struct future* future = NULL;
     /* Race conditions don't apply to checking running state, but the loop is cleaner like this */
-    if (pthread_mutex_lock(pool->lock) == -1) {
+    if (pthread_mutex_lock(&pool->lock) == -1) {
         perror("Error locking thread pool mutex in worker thread\n");
         return NULL;
     }
     while (pool->running) {
-        /* Make sure the mutex is unlocked */
-        if (!list_empty(pool->work_queue)) {
+        if (!list_empty(&pool->work_queue)) {
             future = list_entry(list_pop_front(&pool->work_queue), struct future, elem);
-            if (pthread_mutex_unlock(pool->lock) == -1) {
+            if (pthread_mutex_unlock(&pool->lock) == -1) {
                 perror("Error unlocking thread pool mutex in worker thread\n");
                 return NULL;
             }
             /* Execute the future now */
             future->result = future->execution(future->argument);
-            /* Signal future */
+            /* TODO: Signal future */
+            /* We've finished there might be more in the queue */
+            if (pthread_mutex_lock(&pool->lock) == -1) {
+                perror("Error locking thread pool mutex in worker thread\n");
+                return NULL;
+            }
         }
         else {
-            if (pthread_mutex_unlock(pool->lock) == -1) {
+            if (pthread_mutex_unlock(&pool->lock) == -1) {
                 perror("Error unlocking thread pool mutex in worker thread\n");
                 return NULL;
             }
             /* It's empty so lets wait */
-            pthread_cond_wait(pool->cond, pool->lock);
+            pthread_cond_wait(&pool->condition, &pool->lock);
             /* loop assumes thread pool lock is possessed when starting so lets just reloop */
         }
     }
-    if (pthread_mutex_unlock(pool->lock) == -1) {
+    /* Loop starts with it locked, make sure we unlock the pool */
+    if (pthread_mutex_unlock(&pool->lock) == -1) {
         perror("Error unlocking thread pool mutex in worker thread\n");
         return NULL;
     }
+    return NULL;
 }
 
 
