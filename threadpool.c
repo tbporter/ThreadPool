@@ -91,7 +91,8 @@ void* thread_run(void* tpool) {
             }
             /* Execute the future now */
             future->result = future->execution(future->argument);
-            /* TODO: Signal future */
+            sem_post(&(future->sem));
+
             /* We've finished there might be more in the queue */
             if (pthread_mutex_lock(&pool->lock) == -1) {
                 perror("Error locking thread pool mutex in worker thread\n");
@@ -191,3 +192,27 @@ void* future_get(struct future* f){
     return f->result;
 }
 
+void thread_pool_shutdown(struct thread_pool* tpool){
+    if(tpool == NULL)
+        return;
+
+    if(pthread_mutex_lock(&(tpool->lock)) == -1){
+        perror("Error locking thread pool mutex in shutdown\n");
+    }
+
+    tpool->running = false;
+
+    /* TODO: more stuff here */
+
+    if(pthread_mutex_destroy(&(tpool->lock)) == -1){
+        perror("Error destroying thread pool mutex in shutdown\n");
+    }
+
+    if(pthread_cond_destroy(&(tpool->condition)) == -1){
+        perror("Error destroying thread pool condition in shutdown\n");
+    }
+
+    free(tpool);
+    
+    return;
+}
