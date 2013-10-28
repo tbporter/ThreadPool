@@ -130,7 +130,53 @@ struct future * thread_pool_submit(struct thread_pool * pool,
         }
 }
 
-
+void thread_pool_shutdown(struct thread_pool* pool) {
+    pool->running = false;
+    pthread_cond_broadcast(&pool->condition);
+    if (pthread_mutex_lock(&pool->lock) == -1) {
+        perror("Error locking thread pool mutex in thread pool shutdown\n");
+        return;
+    }
+    while (!list_empty(&pool->thread_list)) {
+        struct thread_data* tdata = list_entry(list_pop_front(&pool->thread_list), struct thread_data, elem);
+        void* ret;
+        /* We got what we came for, unlock so threads can finish up */
+        if (pthread_mutex_unlock(&pool->lock) == -1) {
+            perror("Error unlocking thread pool mutex in thread pool shutdown\n");
+            return;
+        }
+        /* Join it, then relock to continue the loop */
+        if (pthread_join(tdata->thread, &ret) == -1) {
+            perror("Could join thread.\n");
+            return;
+        }
+        /* Free thread_data */
+        free(tdata);
+        if (pthread_mutex_lock(&pool->lock) == -1) {
+            perror("Error locking thread pool mutex in thread pool shutdown\n");
+            return;
+        }
+    }
+    /* Should lock incase the calling program is mucking around with this */
+    /* Abandon the remaining futures */
+    while (!list_empty(&pool->work_queue)) {
+        list_pop_front(&pool->work_queue);
+    }
+    if (pthread_mutex_unlock(&pool->lock) == -1) {
+        perror("Error unlocking thread pool mutex in thread pool shutdown\n");
+        return;
+    }
+    /* clean up syncronization constructs */
+    if (pthread_cond_destroy(&pool->condition) == -1) {
+        perror("Error destroying thread pool condition\n");
+        return;
+    }
+    if (pthread_mutex_destroy(&pool->lock) == -1) {
+        perror("Error destroying thread pool lock\n");
+        return;
+    }
+    free(pool);
+}
 
 void future_free(struct future* f){
     free(f);
